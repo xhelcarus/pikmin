@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pikmin Timer</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 外層包裝 */
+        #mapWrapper {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        /* 核心防移位容器 */
+        #mapContainer {
+            position: relative;
+            aspect-ratio: 16 / 9;
+            width: 100%;
+            height: 100%;
+            max-width: calc(100vh * 16 / 9);
+            max-height: calc(100vw * 9 / 16);
+            box-sizing: border-box;
+            background-color: #151515;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+        
+        #mapContainer::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-image: var(--map-bg, none);
+            background-position: center;
+            background-size: 100% 100%;
+            opacity: 0.75; 
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        #mapContainer.locked { cursor: default; }
+        #mapContainer.editing { cursor: crosshair; }
+
+        /* 頂部中央設定列 */
+        .top-bar {
+            position: absolute;
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            width: 68px; 
+            height: 32px;
+            background: transparent;
+            backdrop-filter: none;
+            box-shadow: none;
+            border: none;
+        }
+
+        button {
+            height: 32px; 
+            border: none;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            transition: background 0.2s, transform 0.1s, opacity 0.2s, width 0.25s cubic-bezier(0.4, 0, 0.2, 1), margin 0.25s;
+        }
+        
+        button:active {
+            transform: scale(0.95);
+        }
+
+        .btn-mode { 
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 68px; 
+            background: #007AFF; 
+            color: white; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3); 
+            z-index: 5;
+        }
+        .btn-mode.active { 
+            background: #FF9500; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5); 
+        }
+
+        .btn-earth {
+            position: absolute;
+            top: 0;
+            left: 100%; 
+            width: 0px; 
+            opacity: 0;
+            margin-left: 0px;
+            background: #3a3a3c;
+            color: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            overflow: hidden; 
+            white-space: nowrap;
+            z-index: 4;
+        }
+
+        .btn-earth:hover { 
+            background: #48484a; 
+        }
+
+        .btn-earth.extended {
+            width: 38px;
+            opacity: 1;
+            margin-left: 12px; 
+        }
+
+        /* 基礎方塊結構 */
+        .floating-timer {
+            position: absolute;
+            z-index: 5;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85); 
+            border: 1.5px solid rgba(255, 255, 255, 0.15); 
+            border-radius: 8px;
+            width: 90px;  
+            height: 42px; 
+            box-sizing: border-box;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            user-select: none;
+            cursor: pointer;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden; 
+            padding: 2px 4px;
+        }
+
+        /* 三階外框高亮配色 */
+        .floating-timer.state-counting { border: 1.5px solid rgba(255, 255, 255, 0.15); } 
+        .floating-timer.state-warning { border: 2px solid #FFCC00; box-shadow: 0 0 8px rgba(255, 204, 0, 0.4); }  
+        .floating-timer.state-critical { border: 2px solid #FF3B30; animation: shing-flash 0.5s infinite alternate; }
+        
+        @keyframes shing-flash {
+            0% { border-color: #FF3B30; box-shadow: 0 0 4px rgba(255, 59, 48, 0.6); }
+            100% { border-color: #FF8883; box-shadow: 0 0 15px rgba(255, 59, 48, 1); }
+        }
+        
+        .editing .floating-timer { 
+            border: 2px dashed #FF9500; 
+            box-shadow: none;
+            animation: none;
+            cursor: move;
+            overflow: visible; 
+        }
+
+        .mush-edit-handle {
+            display: none;
+            position: absolute;
+            top: -8px;
+            left: -8px;
+            width: 16px;
+            height: 16px;
+            background: #007AFF;
+            color: white;
+            border-radius: 50%;
+            font-size: 11px;
+            line-height: 15px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: bold;
+            border: 1.5px solid white;
+            z-index: 15;
+        }
+        .editing .mush-edit-handle { display: block; }
+
+        .mush-name {
+            display: block; 
+            font-size: 12px; 
+            font-weight: bold;
+            color: #8E8E93; 
+            width: 100%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-align: center;
+            line-height: 1.2;
+            z-index: 2; 
+        }
+
+        /* 右下角 8 秒微型循環計時器樣式 */
+        .mush-loop-timer {
+            position: absolute;
+            bottom: 2px; 
+            right: 4px;  
+            font-size: 9px;
+            font-weight: bold;
+            font-family: monospace;
+            color: #8E8E93; 
+            z-index: 3;
+            line-height: 1;
+        }
+
+        .state-critical .mush-name,
+        .state-critical .mush-loop-timer { color: #FFFFFF; } 
+        
+        .editing .mush-name { display: block !important; color: #FF9500 !important; }
+        .editing .mush-loop-timer { display: none !important; } 
+
+        /* 建立一個垂直的水平橫向行 */
+        .mush-time-stage {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 18px; 
+            overflow: hidden;
+            position: relative;
+            margin-top: 2px;
+            font-family: monospace; 
+            font-weight: bold; 
+            font-size: 15px;
+        }
+
+        /* 基礎時間顏色渲染 */
+        .state-counting .mush-time-stage { color: #8E8E93; } 
+        .state-warning .mush-time-stage { color: #FFCC00; }  
+        .state-critical .mush-time-stage { color: #FF3B30; } 
+        
+        .floating-timer:not(.state-counting):not(.state-warning):not(.state-critical) .mush-time-stage,
+        .editing .mush-time-stage { display: none !important; }
+
+        /* 將小時、秒數固定在左右，將分鐘單獨做成垂直局部視窗槽 */
+        .mush-mm-slot {
+            display: block;
+            width: 20px; 
+            height: 18px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* 局部滾動軌道 */
+        .mush-mm-slider {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 36px; 
+            transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1); 
+            transform: translateY(0px);
+        }
+
+        /* 只有具備計時狀態且滑鼠懸停時，局部滾動槽才往上捲動 */
+        .floating-timer.state-counting:hover .mush-mm-slider {
+            transform: translateY(-18px);
+        }
+
+        .mush-mm-line {
+            height: 18px;
+            line-height: 18px;
+            text-align: center;
+            width: 100%;
+        }
+
+        .mush-mm-line.actual-value {
+            color: #FFFFFF; 
+        }
+
+        .mush-close {
+            display: none;
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            width: 16px;
+            height: 16px;
+            background: #FF3B30;
+            color: white;
+            border-radius: 50%;
+            font-size: 11px;
+            line-height: 15px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: bold;
+            border: 1.5px solid white;
+            z-index: 15;
+        }
+        .editing .mush-close { display: block; }
+
+        /* Modal 樣式 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-box {
+            background: #2c2c2e;
+            padding: 20px;
+            border-radius: 15px;
+            color: white;
+            box-shadow: 0 5px 25px rgba(0,0,0,0.5);
+            text-align: center;
+            width: 290px;
+        }
+
+        .modal-box h3 { margin-top: 0; color: #007AFF; font-size: 16px; margin-bottom: 15px; }
+
+        .modal-box input[type="text"] {
+            width: 90%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: none;
+            border-radius: 5px;
+            background: #3a3a3c;
+            color: white;
+            font-size: 14px;
+        }
+
+        .time-inputs {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #1c1c1e;
+            padding: 12px 8px;
+            border-radius: 10px;
+            margin: 0 auto 15px auto;
+            width: 90%;
+            box-sizing: border-box;
+        }
+        
+        .hr-stepper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-right: 20px;
+            background: #3a3a3c;
+            border-radius: 6px;
+            padding: 2px;
+        }
+        .hr-stepper button {
+            background: none;
+            border: none;
+            color: #007AFF;
+            font-size: 12px;
+            cursor: pointer;
+            padding: 2px 8px;
+            font-weight: bold;
+        }
+        .hr-stepper button:active { color: #64D2FF; }
+        .hr-display {
+            font-size: 13px;
+            color: #8E8E93;
+            font-weight: bold;
+            font-family: monospace;
+            user-select: none;
+        }
+
+        .time-box-wrapper {
+            display: flex;
+            align-items: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .modal-box input.atm-input {
+            width: 110px;
+            height: 38px;
+            padding: 0;
+            border: 2px solid #48484a;
+            border-radius: 6px;
+            background: #2c2c2e;
+            color: white;
+            font-size: 24px;
+            text-align: center;
+            font-family: monospace;
+            font-weight: bold;
+            letter-spacing: 1px;
+            caret-color: transparent; 
+        }
+        .modal-box input.atm-input:focus {
+            border-color: #007AFF;
+            background: #3a3a3c;
+            outline: none;
+        }
+        
+        .hide-time-input .time-inputs { display: none !important; }
+        .hide-name-input input[type="text"] { display: none !important; }
+
+        .modal-buttons button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 0 5px;
+        }
+
+        .btn-confirm { background: #34C759; color: white; }
+        .btn-cancel { background: #48484a; color: white; }
+    </style>
+</head>
+<body>
+
+    <div id="mapWrapper">
+        <div id="topBar" class="top-bar">
+            <button id="modeBtn" class="btn-mode" onclick="toggleMode()">編輯</button>
+            <input type="file" id="fileInput" accept="image/*" onchange="loadMap(event)" style="display:none;">
+            <button id="earthBtn" class="btn-earth" onclick="document.getElementById('fileInput').click()" title="換地圖">✏</button>
+        </div>
+
+        <div id="mapContainer" class="locked" onclick="handleMapClick(event)"></div>
+    </div>
+
+    <div id="timerModal" class="modal-overlay" onclick="closeModal()">
+        <div class="modal-box" id="modalBox" onclick="event.stopPropagation()">
+            <h3 id="modalTitle">標題</h3>
+            
+            <input type="text" id="modalName" placeholder="蘑菇名稱">
+            
+            <div class="time-inputs">
+                <div class="hr-stepper">
+                    <button onclick="stepHr(1)">▲</button>
+                    <div class="hr-display" id="hrValueDisplay">00h</div>
+                    <button onclick="stepHr(-1)">▼</button>
+                </div>
+                
+                <div class="time-box-wrapper">
+                    <input type="tel" id="atmTimerInput" class="atm-input" placeholder="00:00">
+                </div>
+            </div>
+            
+            <div class="modal-buttons">
+                <button class="btn-cancel" onclick="closeModal()">取消</button>
+                <button class="btn-confirm" onclick="confirmTimer()">確定</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isEditingMode = false; 
+        let clickX = 0, clickY = 0;
+        let selectedMushroomId = null;
+        let modalType = ""; 
+        let currentHrValue = 0; 
+        let atmDigits = []; 
+        
+        let mushrooms = []; 
+        let idCounter = 0;
+
+        let isDragging = false;
+        let dragTarget = null;
+        let dragMushroomObj = null;
+
+        // // [函式 1] pad(num)
+        // // 功能：將傳入嘅數字轉換成字串，如果只有 1 位數，就會喺前面補上一個「0」，確保永遠顯示 2 位數（例如 5 變成 "05"）。
+        function pad(num) { return num.toString().padStart(2, '0'); }
+
+        // // [函式 2] setMapBackground(url)
+        // // 功能：接收一個地圖圖片嘅網址（或 Base64 數據碼），然後透過修改 CSS 變數 `--map-bg`，將呢張圖設定為背景容器嘅底圖。
+        function setMapBackground(url) {
+            document.getElementById('mapContainer').style.setProperty('--map-bg', `url('${url}')`);
+        }
+
+        // // [函式 3] window.onload
+        // // 功能：當整個網頁加載完畢時自動觸發。負責從瀏覽器快取（localStorage）讀取之前保存嘅地圖同埋所有蘑菇數據，並建立對應嘅計時方塊（DOM），同時傳入 index 啟動錯開毫秒嘅倒數計時。
+        window.onload = function() {
+            const savedMap = localStorage.getItem('pikminMapData');
+            if (savedMap) setMapBackground(savedMap);
+
+            const savedMushrooms = localStorage.getItem('pikminMushrooms');
+            
+            if (savedMushrooms) {
+                const parsedMushrooms = JSON.parse(savedMushrooms);
+
+                parsedMushrooms.forEach((m, index) => {
+                    if (m.targetTimestamp && m.targetTimestamp > Date.now()) {
+                        m.targetTimestamp = parseInt(m.targetTimestamp);
+                    } else {
+                        m.targetTimestamp = 0;
+                    }
+                    
+                    m.id = idCounter++;
+                    m.interval = null;
+                    m.timeout = null; 
+                    mushrooms.push(m);
+                    createMushroomDOM(m);
+                    
+                    if (m.targetTimestamp > Date.now()) {
+                        // 💡 核心改良：開機初始化歷史數據時，把當前 index (載入順序) 傳入
+                        startCountdown(m, index);
+                    }
+                });
+            }
+            updateModeUI();
+
+            const modalBox = document.getElementById('modalBox');
+            if (modalBox) {
+                modalBox.addEventListener('keydown', function(event) {
+                    const activeEl = document.activeElement;
+                    
+                    if (event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        stepHr(1);
+                        return;
+                    }
+                    if (event.key === 'ArrowDown') {
+                        event.preventDefault();
+                        stepHr(-1);
+                        return;
+                    }
+
+                    if (activeEl && activeEl.id === 'atmTimerInput') {
+                        if (/^[0-9]$/.test(event.key)) {
+                            event.preventDefault();
+                            if (atmDigits.length < 4) { 
+                                atmDigits.push(event.key);
+                                updateAtmInputDisplay();
+                            }
+                            return;
+                        }
+
+                        if (event.key === 'Backspace') {
+                            event.preventDefault();
+                            atmDigits.pop(); 
+                            updateAtmInputDisplay();
+                            return;
+                        }
+                    }
+
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        confirmTimer();
+                    }
+                });
+            }
+
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+        };
+
+        // // [函式 4] updateAtmInputDisplay()
+        // // 功能：讀取鍵盤輸入嘅數字陣列（atmDigits），將其填滿至 4 位數，然後拆開成「分:秒」（MM:SS）嘅格式並更新顯示到輸入框之中（例如輸入 123 變成 "01:23"）。
+        function updateAtmInputDisplay() {
+            let fullStr = atmDigits.join('').padStart(4, '0'); 
+            let mm = fullStr.slice(0, 2);
+            let ss = fullStr.slice(2, 4);
+            document.getElementById('atmTimerInput').value = `${mm}:${ss}`;
+        }
+
+        // // [函式 5] stepHr(amount)
+        // // 功能：用嚟加減彈出視窗（Modal）入面嘅「小時（h）」數值。當撳上或下箭咀時，數值會隨之變動，極限被鎖定在 0h 至 99h 之間。
+        function stepHr(amount) {
+            currentHrValue += amount;
+            if (currentHrValue < 0) currentHrValue = 0;
+            if (currentHrValue > 99) currentHrValue = 99;
+            document.getElementById('hrValueDisplay').innerText = pad(currentHrValue) + 'h';
+        }
+
+        // // [函式 6] saveToStorage()
+        // // 功能：將現有 mushrooms 陣列入面所有蘑菇點嘅 ID、名稱、X/Y 座標百分比、以及目標倒數結束時間戳，打包轉換成 JSON 字串，永久儲存到瀏覽器嘅 localStorage 緩存中。
+        function saveToStorage() {
+            const dataToSave = mushrooms.map(m => {
+                return {
+                    id: m.id, 
+                    name: m.name, 
+                    x: m.x, 
+                    y: m.y, 
+                    targetTimestamp: m.targetTimestamp && m.targetTimestamp > Date.now() ? m.targetTimestamp : 0
+                };
+            });
+            localStorage.setItem('pikminMushrooms', JSON.stringify(dataToSave));
+            localStorage.setItem('pikminSaveTime', Date.now().toString());
+        }
+
+        // // [函式 7] loadMap(event)
+        // // 功能：當使用者選取本地圖片檔案時觸發。利用 FileReader 將圖片轉化為 Base64 URL 數據，隨即將其設為網頁背景並永久儲存快取。
+        function loadMap(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    setMapBackground(e.target.result);
+                    localStorage.setItem('pikminMapData', e.target.result);
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        // // [函式 8] toggleMode()
+        // // 功能：負責喺「查看計時模式」與「編輯地圖模式」之間進行一鍵切換，並在切換後呼叫 UI 更新函式。
+        function toggleMode() {
+            isEditingMode = !isEditingMode;
+            updateModeUI();
+        }
+
+        // // [函式 9] updateModeUI()
+        // // 功能：根據當前嘅模式狀態（isEditingMode），改變畫布容器嘅 class（變成 crosshair 準星十字或普通箭頭），並且改變頂部「編輯 / 鎖定」按鈕嘅外觀顏色與文字。
+        function updateModeUI() {
+            const container = document.getElementById('mapContainer');
+            const btn = document.getElementById('modeBtn');
+            const earthBtn = document.getElementById('earthBtn');
+            
+            if (!container || !btn || !earthBtn) return;
+            
+            if (isEditingMode) {
+                container.className = 'editing';
+                btn.innerText = '鎖定';
+                btn.classList.add('active');
+                earthBtn.classList.add('extended');
+            } else {
+                container.className = 'locked';
+                btn.innerText = '編輯';
+                btn.classList.remove('active');
+                earthBtn.classList.remove('extended');
+            }
+        }
+
+        // // [函式 10] handleMapClick(event)
+        // // 功能：在「編輯模式」下，點擊地圖任何一個空白地方時觸發。計算點擊位置相對於地圖畫布嘅 X/Y 百分比座標，並彈出輸入視窗準備新增一個永久蘑菇點。
+        function handleMapClick(event) {
+            if (event.target !== document.getElementById('mapContainer')) return;
+            if (!isEditingMode) return;
+
+            const rect = event.target.getBoundingClientRect();
+            clickX = ((event.clientX - rect.left) / rect.width) * 100;
+            clickY = ((event.clientY - rect.top) / rect.height) * 100;
+
+            selectedMushroomId = null; 
+            modalType = "NEW_MUSH";
+            
+            const box = document.getElementById('modalBox');
+            box.className = 'modal-box hide-time-input';
+            document.getElementById('modalTitle').innerText = "新增永久蘑菇點";
+            document.getElementById('modalName').value = '';
+            document.getElementById('timerModal').style.display = 'flex';
+            document.getElementById('modalName').focus();
+        }
+
+        // // [函式 11] handleMouseDown(id, event)
+        // // 功能：在「編輯模式」下，當滑鼠左鍵點擊並按住 any 一個計時方塊時觸發。開啟「拖拽開關（isDragging）」，並鎖定當前準備移動嘅目標方塊。
+        function handleMouseDown(id, event) {
+            if (!isEditingMode) return; 
+            if (event.target.className === 'mush-close' || event.target.className === 'mush-edit-handle' || event.target.closest('.mush-time-stage')) return; 
+            
+            event.stopPropagation();
+            isDragging = true;
+            dragTarget = document.getElementById(`timer-card-${id}`);
+            dragMushroomObj = mushrooms.find(m => m.id === id);
+        }
+
+        // // [函式 12] handleMouseMove(event)
+        // // 功能：當滑鼠在全網頁移動時持續監聽。如果「拖拽開關」處於開啟狀態，就會即時計算滑鼠在 16:9 畫布內嘅最新百分比位置，並即時更新該計時方塊嘅畫面位置。
+        function handleMouseMove(event) {
+            if (!isDragging || !dragTarget || !dragMushroomObj || !isEditingMode) return;
+            
+            const container = document.getElementById('mapContainer');
+            const rect = container.getBoundingClientRect();
+            
+            let x = ((event.clientX - rect.left) / rect.width) * 100;
+            let y = ((event.clientY - rect.top) / rect.height) * 100;
+
+            if (x < 0) x = 0; if (x > 100) x = 100;
+            if (y < 0) y = 0; if (y > 100) y = 100;
+
+            dragMushroomObj.x = x;
+            dragMushroomObj.y = y;
+
+            dragTarget.style.left = `${x}%`;
+            dragTarget.style.top = `${y}%`;
+        }
+
+        // // [函式 13] handleMouseUp()
+        // // 功能：當放開滑鼠左鍵時觸發。關閉拖拽狀態，清空鎖定目標，並將移動後嘅新位置立即儲存到瀏覽器緩存。
+        function handleMouseUp() {
+            if (isDragging) {
+                isDragging = false;
+                dragTarget = null;
+                dragMushroomObj = null;
+                saveToStorage(); 
+            }
+        }
+
+        // // [函式 14] handleMushroomClick(id, event)
+        // // 功能：在「查看模式」下點擊蘑菇方塊時觸發。如果該蘑菇點尚未計時，會彈出視窗讓你輸入時間；如果已經喺度倒數中，彈出視窗會聰明地自動將「大計時時間減去 5 分鐘」，幫你預填好上一次輸入嘅原始時間，方便你一鍵重設。
+        function handleMushroomClick(id, event) {
+            event.stopPropagation();
+            let m = mushrooms.find(t => t.id === id);
+            if (!m) return;
+
+            if (isEditingMode) {
+                if (event.target.className === 'mush-edit-handle') {
+                    selectedMushroomId = id;
+                    modalType = "EDIT_NAME";
+                    const box = document.getElementById('modalBox');
+                    box.className = 'modal-box hide-time-input';
+                    document.getElementById('modalTitle').innerText = "修改蘑菇名稱";
+                    document.getElementById('modalName').value = m.name;
+                    document.getElementById('timerModal').style.display = 'flex';
+                    document.getElementById('modalName').focus();
+                }
+                return; 
+            }
+
+            let currentSecs = 0;
+            if (m.targetTimestamp && m.targetTimestamp > Date.now()) {
+                currentSecs = Math.ceil((m.targetTimestamp - Date.now()) / 1000);
+            }
+
+            if (currentSecs > 0) {
+                selectedMushroomId = id;
+                modalType = "START_TIMER";
+                
+                if (currentSecs >= 300) {
+                    currentSecs = currentSecs - 300;
+                } else {
+                    currentSecs = 0;
+                }
+
+                let hr = Math.floor(currentSecs / 3600);
+                let min = Math.floor((currentSecs % 3600) / 60);
+                let sec = currentSecs % 60;
+
+                currentHrValue = hr;
+                document.getElementById('hrValueDisplay').innerText = pad(hr) + "h";
+                
+                let minStr = pad(min);
+                let secStr = pad(sec);
+                atmDigits = (minStr + secStr).split('');
+                while(atmDigits.length > 0 && atmDigits[0] === '0') {
+                    atmDigits.shift();
+                }
+
+                const box = document.getElementById('modalBox');
+                box.className = 'modal-box hide-name-input'; 
+                document.getElementById('modalTitle').innerText = m.name;
+                document.getElementById('timerModal').style.display = 'flex';
+                
+                updateAtmInputDisplay();
+                setTimeout(() => { document.getElementById('atmTimerInput').focus(); }, 50);
+                return;
+            }
+
+            selectedMushroomId = id;
+            modalType = "START_TIMER";
+            
+            currentHrValue = 0; 
+            document.getElementById('hrValueDisplay').innerText = "00h";
+            atmDigits = []; 
+            
+            const box = document.getElementById('modalBox');
+            box.className = 'modal-box hide-name-input'; 
+            document.getElementById('modalTitle').innerText = m.name;
+            document.getElementById('timerModal').style.display = 'flex';
+            
+            updateAtmInputDisplay();
+            setTimeout(() => { document.getElementById('atmTimerInput').focus(); }, 50);
+        }
+
+        // // [函式 15] closeModal()
+        // // 功能：關閉彈出式輸入視窗，並將裡面暫存嘅鍵盤輸入數字緩存（atmDigits）清空，確保下一次打開視窗時乾淨無殘留。
+        function closeModal() { document.getElementById('timerModal').style.display = 'none'; atmDigits = []; }
+
+        // // [函式 16] confirmTimer()
+        // // 功能：當在輸入視窗撳「確定」或 Enter 鍵時觸發。會根據當前操作類型（新增蘑菇、修改名稱、或啟動計時器）去處理數據。若是啟動計時，會自動將你輸入嘅時間「加上 300 秒防呆加碼時間」，算出精準結束時間戳，寫入儲存庫後自動刷新頁面。
+        function confirmTimer() {
+            if (modalType === "EDIT_NAME") {
+                let m = mushrooms.find(t => t.id === selectedMushroomId);
+                if (m) {
+                    m.name = document.getElementById('modalName').value.trim() || "未命名蘑菇";
+                    document.getElementById(`timer-card-${m.id}`).querySelector('.mush-name').innerText = m.name;
+                    saveToStorage();
+                    setTimeout(() => { location.reload(); }, 30); 
+                }
+            } else if (modalType === "NEW_MUSH") {
+                let name = document.getElementById('modalName').value.trim() || "未命名蘑菇";
+                let newMush = {
+                    id: idCounter++,
+                    name: name,
+                    targetTimestamp: 0,
+                    x: clickX,
+                    y: clickY,
+                    interval: null,
+                    timeout: null
+                };
+                mushrooms.push(newMush);
+                createMushroomDOM(newMush);
+                saveToStorage();
+                setTimeout(() => { location.reload(); }, 30);
+            } else if (modalType === "START_TIMER") {
+                let hr = currentHrValue;
+                
+                let fullStr = atmDigits.join('').padStart(4, '0');
+                let min = parseInt(fullStr.slice(0, 2)) || 0;
+                let sec = parseInt(fullStr.slice(2, 4)) || 0;
+                
+                if (min > 59) min = 59;
+                if (sec > 59) sec = 59;
+
+                let totalSeconds = (hr * 3600) + (min * 60) + sec + 300; 
+
+                let m = mushrooms.find(t => t.id === selectedMushroomId);
+                if (m) {
+                    m.targetTimestamp = Date.now() + (totalSeconds * 1000);
+                    startCountdown(m);
+                    saveToStorage();
+                    setTimeout(() => { location.reload(); }, 30); 
+                }
+            }
+            closeModal();
+        }
+
+        // // [函式 17] createMushroomDOM(m)
+        // // 功能：動態建立計時方塊嘅 HTML 節點，注入內部嘅排版結構（例如小時、秒數、包含第一行與第二行數值嘅分鐘垂直滾動軌道、以及右下角的 8 秒微型連鎖循環計時器），然後插入到地圖容器畫布中。
+        function createMushroomDOM(m) {
+            const container = document.getElementById('mapContainer');
+            const div = document.createElement('div');
+            div.className = 'floating-timer';
+            div.id = `timer-card-${m.id}`;
+            
+            div.style.left = `${m.x}%`;
+            div.style.top = `${m.y}%`;
+            
+            div.onclick = (e) => handleMushroomClick(m.id, e);
+            div.onmousedown = (e) => handleMouseDown(m.id, e);
+
+            div.innerHTML = `
+                <div class="mush-edit-handle">✎</div>
+                <div class="mush-close" onclick="deleteMushroomPoint(${m.id}, event)">×</div>
+                <div class="mush-loop-timer" id="mush-loop-${m.id}"></div>
+                <div class="mush-name">${m.name}</div>
+                <div class="mush-time-stage">
+                    <span id="mush-hh-${m.id}"></span>
+                    <div class="mush-mm-slot">
+                        <div class="mush-mm-slider" id="mush-mm-slider-${m.id}">
+                            <div class="mush-mm-line normal-value" id="mush-mm-normal-${m.id}">00</div>
+                            <div class="mush-mm-line actual-value" id="mush-mm-actual-${m.id}">00</div>
+                        </div>
+                    </div>
+                    <span id="mush-ss-${m.id}"></span>
+                </div>
+            `;
+            container.appendChild(div);
+            updateLabelUI(m);
+        }
+
+        // // [函式 18] startCountdown(m, startIndex = 0)
+        // // 功能：倒數計時核心引擎。
+        // // 💡 實時不對齊毫秒隔離鎖邏輯：
+        // // 為了打破瀏覽器在剛開機（Cold Start）或手動刷新網頁時會將多個定時器強行合併處理嘅宿命，此處引入了 `startIndex * 200` 公式。
+        // // 佢會根據每個蘑菇方塊在數據庫中嘅加載先後順序，強制算出一個完全錯開、不重疊嘅物理毫秒起跑點（例如 200ms, 400ms, 600ms...），
+        // // 先利用第一個 `setTimeout` 去卡住這個微觀毫秒切片，當時間一到，才正式啟動一秒一次嘅 `setInterval` 軌道。
+        // // 這能確保每顆蘑菇每一秒鐘在跳字嘅那一瞬間，在操作系統層面上都是錯開、完全不會齊步跳字嘅。
+        function startCountdown(m, startIndex = 0) {
+            if (m.interval) clearInterval(m.interval);
+            if (m.timeout) clearTimeout(m.timeout);
+            
+            updateLabelUI(m);
+
+            let remainingMs = m.targetTimestamp - Date.now();
+            if (remainingMs <= 0) return;
+
+            let targetSliceMs = (startIndex * 200) % 1000;
+            let delay = (remainingMs % 1000) - targetSliceMs;
+            if (delay < 0) delay += 1000;
+
+            m.timeout = setTimeout(() => {
+                let remaining = Math.ceil((m.targetTimestamp - Date.now()) / 1000);
+                if (remaining > 0) {
+                    updateLabelUI(m);
+                    saveToStorage();
+                    
+                    m.interval = setInterval(() => {
+                        let innerRemaining = Math.ceil((m.targetTimestamp - Date.now()) / 1000);
+                        if (innerRemaining > 0) {
+                            updateLabelUI(m);
+                            saveToStorage();
+                        } else {
+                            clearInterval(m.interval);
+                            m.targetTimestamp = 0;
+                            updateLabelUI(m); 
+                        }
+                    }, 1000);
+                } else {
+                    updateLabelUI(m); 
+                }
+            }, delay);
+        }
+
+        // // [函式 19] updateLabelUI(m)
+        // // 功能：UI 渲染刷新大腦。負責實時計算剩餘嘅總秒數，根據剩餘時間將外框歸類並附加不同的外觀配色（灰色正常、黃色警告、紅色十秒閃爍臨界）。
+        // // 同時，它會分別計算出「包含防呆加碼嘅大計時分鐘（minutes）」以及「扣減去 5 分鐘後嘅遊戲實際分鐘（gMinutes）」，
+        // // 填入垂直滾動槽嘅第一行與第二行中，並負責在進入最後 5 分鐘時強行鎖定滾動軌道不位移，防止畫面抖動。
+        // // 💡 5分鐘區間與最後8秒退場機制：當 `remaining <= 300` 且 `remaining > 8` 時，右下角先會啟動計算並顯示 8 秒微型倒數。一旦進入最後 8 秒（remaining <= 8），因為節奏與大計時完全同步，小計時會聰明地自動清空、不重疊顯示，保持 UI 極致乾淨！
+        function updateLabelUI(m) {
+            let cardEl = document.getElementById(`timer-card-${m.id}`);
+            let hhEl = document.getElementById(`mush-hh-${m.id}`);
+            let mmNormalEl = document.getElementById(`mush-mm-normal-${m.id}`);
+            let mmActualEl = document.getElementById(`mush-mm-actual-${m.id}`);
+            let ssEl = document.getElementById(`mush-ss-${m.id}`);
+            let sliderEl = document.getElementById(`mush-mm-slider-${m.id}`);
+            let loopEl = document.getElementById(`mush-loop-${m.id}`); 
+            
+            if (!cardEl || !hhEl || !mmNormalEl || !mmActualEl || !ssEl || !sliderEl || !loopEl) return;
+
+            cardEl.classList.remove('state-counting', 'state-warning', 'state-critical');
+
+            let remainingMs = 0;
+            if (m.targetTimestamp && m.targetTimestamp > Date.now()) {
+                remainingMs = m.targetTimestamp - Date.now();
+            }
+
+            let remaining = Math.ceil(remainingMs / 1000);
+
+            if (remaining <= 0) {
+                hhEl.innerText = "";
+                mmNormalEl.innerText = "";
+                mmActualEl.innerText = "";
+                ssEl.innerText = "";
+                loopEl.innerText = ""; 
+                sliderEl.style.transform = "translateY(0px)"; 
+            } else {
+                if (remaining <= 10) {
+                    cardEl.classList.add('state-critical'); 
+                } else if (remaining <= 300) {
+                    cardEl.classList.add('state-warning');  
+                } else {
+                    cardEl.classList.add('state-counting'); 
+                }
+
+                let hours = Math.floor(remaining / 3600);
+                let minutes = Math.floor((remaining % 3600) / 60);
+                let seconds = remaining % 60;
+                
+                let gameSecs = remaining > 300 ? remaining - 300 : 0;
+                let gMinutes = Math.floor((gameSecs % 3600) / 60);
+
+                // 💡 限制顯示區間：只有在大計時剩下 5 分鐘（300秒）內，而且大於最後 8 秒時才顯示
+                if (remaining <= 300 && remaining > 8) {
+                    let loopSeconds = ((remaining - 1) % 8) + 1;
+                    loopEl.innerText = loopSeconds;
+                } else {
+                    loopEl.innerText = ""; // 超過 5 分鐘，或進入最後 8 秒時自動消失
+                }
+
+                if (hours > 0) {
+                    hhEl.innerText = `${pad(hours)}:`;
+                } else {
+                    hhEl.innerText = "";
+                }
+
+                mmNormalEl.innerText = pad(minutes); 
+                mmActualEl.innerText = pad(gMinutes); 
+
+                ssEl.innerText = `:${pad(seconds)}`;
+
+                if (remaining <= 300) {
+                    sliderEl.style.transform = "translateY(0px)";
+                }
+            }
+        }
+
+        // // [函式 20] deleteMushroomPoint(id, event)
+        // // 功能：在「編輯模式」下點擊紅色「×」按鈕時觸發。立即清除該蘑菇專屬嘅 `setInterval` 異步循環線程與 `setTimeout` 定時延遲，喺內存陣列中沒收該蘑菇數據，並將畫面上嘅 HTML 節點拔除銷毀，最後刷新頁面。
+        function deleteMushroomPoint(id, event) {
+            event.stopPropagation();
+            let m = mushrooms.find(t => t.id === id); 
+            if (m && m.interval) clearInterval(m.interval);
+            if (m && m.timeout) clearTimeout(m.timeout);
+            mushrooms = mushrooms.filter(t => t.id !== id);
+            
+            const el = document.getElementById(`timer-card-${id}`);
+            if (el) el.remove();
+            saveToStorage();
+            setTimeout(() => { location.reload(); }, 30);
+        }
+    </script>
+</body>
+</html>
